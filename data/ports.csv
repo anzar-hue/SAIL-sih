@@ -1,0 +1,12 @@
+port_name,coast,latitude,longitude,max_dwt_mt,max_draft_m,max_loa_m,max_beam_m,cargo_handling,congestion_waiting_time
+Kandla (Deendayal Port),west ,23.0185° N ,70.2310° E,"75,000",14.5,270,50,"Liquid Cargo,Dry Bulk Cargo,Containers",2-5 days 
+Mumbai Port,west,18.9410° N,72.8550° E," 315,000",15.80,335,39.62,"Liquid Bulk & POL,Dry Bulk & Breakbulk",
+JNPA (Nhava Sheva),west,18.9482° N,72.9464° E,"160,000",15.00,370,52,"Container Traffic,Liquid Cargo,Shallow Water & Bulk",1.2-2.4 hrs
+Mormugao,west,15.4140° N,73.8100° E,"275,000",14,335,50,"Iron ore, manganese ore, and alumina (exports) : coal (imports)",0.5-1.5 days
+New Mangalore,west,12.9166° N,74.8333° E,"300,000",14,350,48,"Liquid Bulk & Gas, dry bulk , Containerized Traffic",18.7 hrs 
+Cochin,west,09.9667° N ,76.2667° E,"300,000",14.50,350 ,50,"Liquid Bulk & LNG, Ship Repair & Bunkering",1.5-3 hrs 
+Paradip,East,20°15′55″ N,86°40′34″ E,"320,000",18.5,300,48,"thermal coal, iron ore pellets, manganese, coking coal, and limestone,Liquid & Gas Cargo,Fertilizers & Clean Cargo",1.5-3.5 days
+Visakhapatnam,East,17.6833° N,83.3166° E,"200,000",18.10,390,50,"crude oil/POL, iron ore exports, steam/coking coal, fertilizers, liquid chemicals, and global container networks",1.5-2.5 days
+Chennai,East,13.0827° N,80.2707° E,"160,000",15.50,280.40,50,"automobiles via a specialized Ro-Ro terminal, project machinery, petroleum/POL products, and international cruise traffic",1.8 days 
+Kamarajar (Ennore),East,13.2625° N,80.3444° E,"170,000",18,360,45," liquid chemicals, LPG, crude oil, LNG products, and vehicle exports",4-12 hrs
+V.O. Chidambaranar (Tuticorin),East,8.7500° N,78.2166° E,"95,000",14.20,330,48,"textiles, minerals, thermal coal, limestone, gypsum, rock phosphate, copper concentrate, and container shipments",1-2 days

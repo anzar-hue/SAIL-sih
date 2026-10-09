@@ -1,0 +1,21 @@
+# Security & Credentials
+.env
+.env.*
+
+# Python Cache & Environments
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+
+# Node & Build Artifacts
+node_modules/
+frontend/node_modules/
+dist/
+frontend/dist/
+
+# OS / Editor metadata
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
