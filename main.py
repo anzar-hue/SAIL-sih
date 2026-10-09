@@ -1,3 +1,5 @@
+#Initial file for testing the logic and architecture of the SAIL Economic Model. This file is not part of the main application and is used for development purposes only.
+
 import pandas as pd
 from sklearn.linear_model import Ridge
 from sklearn.metrics import mean_absolute_error
