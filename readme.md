@@ -11,7 +11,7 @@
 
 Detailed architecture breakdowns, presentation decks, and executive flow diagrams are available on Google Drive:
 
-📄 **[Access the SAIL Architecture & Logistics Deck (Google Drive)](https://docs.google.com/presentation/d/e/2PACX-1vR_yaN9ELan70M7maeqih0uQ_9IwGmNo30LyJQt5B-BfZf8vcOFH8Yia0HftBtv9g/pub?start=false&loop=true&delayms=3000)**
+📄 **[Access the SAIL Architecture & Logistics Deck (Google Drive)](https://docs.google.com/presentation/d/1DHgTRRUvR83swb85NR9b77Ri36aD_WT89Zf6LGCsuM4/edit?usp=sharing)**
 
 ---
 
