@@ -4,7 +4,7 @@ import os
 import requests
 from dotenv import load_dotenv
 from google import genai
-
+from sail_v3_engine import SAIL_V3_Operations_Engine
 class WeatherRiskEngine:
     def __init__(self, db_path='sail_database.db'):
         self.db_path = db_path
@@ -95,148 +95,85 @@ class WeatherRiskEngine:
 load_dotenv()
 
 class SAILV3Advisor:
-    def __init__(self, v2_json_path='sail_v2_summary.json'):
-        with open(v2_json_path, 'r') as f:
-            self.v2_data = json.load(f)
-            
-        # Secure initialization reading from .env file
+    def __init__(self):
         self.client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
 
-    def run_executive_briefing(self, prediction_result, weather_advisory):
+    def run_executive_briefing(self, optimization_data):
         prompt = f"""
-You are the Director of Commercial Logistics at Steel Authority of India Limited (SAIL).
-Generate an executive decision memo based on this backend data:
-
-BACKEND DATA:
-- Cargo Type: {prediction_result['commodity'].upper()}
-- Base Price: ₹{prediction_result['base_price_prediction_inr']}/tonne
-- Price Range: ₹{prediction_result['price_lower_bound_95']} to ₹{prediction_result['price_upper_bound_95']}
-- Port Capacity Status: {prediction_result['port_capacity_alert']}
-- Tactical Weather Risk: {weather_advisory['risk_level']} at {weather_advisory['port']} ({weather_advisory['estimated_delay_days']} days expected delay)
-- Financial Exposure: ₹{weather_advisory['demurrage_exposure_inr']:,.2f} demurrage.
-- STRICT CARGO CONSTRAINT: {prediction_result['handling_constraint']}
-
-STRICT FORMATTING RULES:
-1. Begin with an **EXECUTIVE KPI SNAPSHOT** (Target Price, Price Ceiling, Action, Demurrage Risk).
-2. Paragraph 1 (Procurement): Analyze the price limits and buying strategy.
-3. Paragraph 2 (Logistics & Chemical Risk): Synthesize the weather at the port with the STRICT CARGO CONSTRAINT. If it is raining and the cargo is Fertilizer or Iron Ore, you MUST explicitly state the risk of liquefaction/cargo loss and order operations to halt or reroute.
-"""
-        print(">> Calling Gemini AI...")
-        response = self.client.models.generate_content(
-            model="gemini-3.5-flash",
-            contents=prompt
-        )
+        You are the Director of Commercial Logistics at SAIL.
+        DATA: {json.dumps(optimization_data, indent=2)}
+        
+        Output strictly in this 3-part format:
+        ### 1. THE VERDICT
+        ### 2. THE MATH JUSTIFICATION
+        ### 3. ALTERNATIVE RISK
+        """
+        response = self.client.models.generate_content(model="gemini-3.8-flash", contents=prompt)
         return response.text
 
 if __name__ == "__main__":
     def main():
-        advisor = SAILV3Advisor('sail_v2_summary.json')
-        weather_engine = WeatherRiskEngine('sail_database.db')
-
-        cargo_menu = {
-            '1': 'coking_coal',
-            '2': 'iron_ore',
-            '3': 'fertilizer',
-            '4': 'pol_liquid',
-        }
-
+        advisor = SAILV3Advisor()
+        v3_engine = SAIL_V3_Operations_Engine()
+        
         print("\n=========================================================")
-        print("      SAIL V3 ENTERPRISE LOGISTICS TERMINAL")
+        print("      SAIL V3 CFO LOGISTICS TERMINAL")
         print("=========================================================")
 
         while True:
-            print('\nSelect Cargo Payload:')
-            print(' [1] Coking Coal       [3] Fertilizer (F&FRM)')
-            print(' [2] Iron Ore Fines    [4] POL (Liquid Cargo)')
-            print(' [Q] Quit')
-
-            cargo_choice = input('\nEnter Cargo Code: ').strip().lower()
-            if cargo_choice == 'q':
-                break
-            if cargo_choice not in cargo_menu:
-                print('Invalid choice. Try again.')
-                continue
-
-            selected_cargo = cargo_menu[cargo_choice]
-
-            print("\nAvailable Discharge Ports:")
-            print(" [1] Mumbai       [4] Dubai")
-            print(" [2] Chennai      [5] Singapore")
-            print(" [3] Colombo      [6] Rotterdam")
-
-            port_choice = input("\nEnter Port Code: ").strip().lower()
-            target_port_name = weather_engine.port_registry.get(port_choice)
-
-            if not target_port_name:
-                print("ERROR: Invalid port. Try again.")
-                continue
-
-            print(f"\n>> Fetching Econometrics for {selected_cargo.upper()}...")
-            cargo_data = advisor.v2_data['models_diagnostics'][selected_cargo]
-
-            payload = {
-                'commodity': selected_cargo,
-                'base_price_prediction_inr': cargo_data['latest_predictions'][0],
-                'price_lower_bound_95': cargo_data['latest_predictions'][0] - cargo_data['confidence_interval_half_width'],
-                'price_upper_bound_95': cargo_data['latest_predictions'][0] + cargo_data['confidence_interval_half_width'],
-                'port_capacity_alert': 'Operating within nominal throughput limits.',
-                'handling_constraint': cargo_data['handling_constraint'],
+            # 0. Cargo Inputs
+            print("\n[0] Select Cargo Payload:")
+            print(" [1] Coking Coal  [2] Iron Ore Fines  [3] Fertilizer (F&FRM)  [4] POL (Liquid)")
+            cargo_choice = input("Cargo Code: ").strip()
+            
+            # Simulated baseline economics for each cargo type
+            cargo_profiles = {
+                '1': {'name': 'Coking Coal', 'current_base': 22000.0, 'future_base': 21500.0, 'storage': 150.0},
+                '2': {'name': 'Iron Ore', 'current_base': 8000.0, 'future_base': 7800.0, 'storage': 100.0},
+                '3': {'name': 'Fertilizer', 'current_base': 45000.0, 'future_base': 46000.0, 'storage': 350.0},
+                '4': {'name': 'POL (Liquid)', 'current_base': 65000.0, 'future_base': 67000.0, 'storage': 600.0}
             }
+            active_cargo = cargo_profiles.get(cargo_choice, cargo_profiles['1'])
 
-            print(f">> Fetching weather for {target_port_name} via SQL...")
-            weather_status = weather_engine.calculate_demurrage_risk(port_choice)
+            # 1. Base Inputs
+            print("\n[1] Select Port: [1] Haldia  [2] Paradip  [3] Vishakhapatnam")
+            port_choice = input("Port Code: ").strip()
+            port_map = {'1': 'Haldia', '2': 'Paradip', '3': 'Vishakhapatnam'}
+            port_name = port_map.get(port_choice, 'Haldia')
 
-            # 1. Update the in-memory dictionary state first
-            advisor.v2_data['active_frontend_cargo'] = selected_cargo
-            advisor.v2_data['weather_risk_status'] = weather_status
+            tonnage = float(input(f"Enter Required Tonnage for {active_cargo['name']} (e.g., 100000): ") or 100000)
+            
+            # 2. Market Shock Inputs
+            print("\n[2] Select Expected Market Event:")
+            print(" [none] [war] [weather_issues] [industry_needs_rise] [port_closed]")
+            event_keyword = input("Event Keyword: ").strip().lower() or "none"
+            
+            target_months = int(input("Months until physical need (Godown Storage Time): ") or 0)
 
-            # 2. Generate the base64 graph string directly into memory and inject it
-            import base64
-            import io
-            import matplotlib.pyplot as plt
+            print("\n>> Executing Layer 4 OR Math...")
+            # 3. Run the Math with dynamic cargo data
+            result = v3_engine.optimize_procurement(
+                current_base=active_cargo['current_base'],
+                predicted_future_base=active_cargo['future_base'],
+                tonnage=tonnage,
+                vessel_type="Panamax",
+                port_name=port_name,
+                event_keyword=event_keyword,
+                target_months_away=target_months,
+                godown_cost_per_tonne_per_month=active_cargo['storage']
+            )
+            
+            # Inject cargo name into the result so Gemini knows what it is analyzing
+            result['cargo_type'] = active_cargo['name']
 
-            cargo_info = advisor.v2_data['models_diagnostics'].get(selected_cargo, {})
-            base_price = cargo_info.get('latest_predictions', [8000.0])[0]
-            ci = cargo_info.get('confidence_interval_half_width', 1000.0)
+            print(">> Generating AI CFO Memo...\n")
+            memo = advisor.run_executive_briefing(result)
 
-            historical_years = [2021, 2022, 2023, 2024, 2025]
-            historical_prices = [base_price * 0.82, base_price * 0.90, base_price * 0.88, base_price * 0.95, base_price]
-
-            fig, ax = plt.subplots(figsize=(8, 4.5))
-            ax.plot(historical_years, historical_prices, marker='o', color='#1f77b4', linewidth=2.5, label='Historical Market Trend')
-            forecast_year = 2026
-            ax.plot([historical_years[-1], forecast_year], [historical_prices[-1], base_price], marker='X', color='#ff7f0e', linestyle='--', linewidth=2, markersize=9, label='V2 Ridge Forecast')
-            ax.fill_between([historical_years[-1], forecast_year], [historical_prices[-1], base_price - ci], [historical_prices[-1], base_price + ci], color='#ff7f0e', alpha=0.15, label='95% Confidence Band')
-
-            weather_note = f"Port Risk: {weather_status.get('risk_level', 'NORMAL')} ({weather_status.get('port', 'N/A')})"
-            ax.set_title(f"SAIL Intelligence: {selected_cargo.upper()} Price Trajectory & Risk Forecast\n({weather_note})", fontsize=11, fontweight='bold', pad=12)
-            ax.set_ylabel("Delivered Price (INR / Tonne)", fontsize=10)
-            ax.set_xlabel("Operational Timeline", fontsize=10)
-            ax.grid(True, linestyle='--', alpha=0.5)
-            ax.legend(loc='upper left', fontsize=9)
-
-            buffer = io.BytesIO()
-            plt.savefig(buffer, format='png', bbox_inches='tight', dpi=150)
-            plt.close(fig)
-            buffer.seek(0)
-            img_base64 = base64.b64encode(buffer.read()).decode('utf-8')
-
-            # Inject graph string into the main dictionary
-            advisor.v2_data['active_graph_base64'] = f"data:image/png;base64,{img_base64}"
-
-            # 3. Write everything out to the JSON file ONCE
-            with open('sail_v2_summary.json', 'w') as f:
-                json.dump(advisor.v2_data, f, indent=4)
-            print(">> [GRAPH OK] Analytics chart rendered and embedded into JSON payload.")
-
-            print(">> Generating AI Executive Memo...\n")
-            memo = advisor.run_executive_briefing(payload, weather_status)
-
-            print('\n================= SAIL EXECUTIVE MEMO =================\n')
+            print('\n================= CFO DIRECTIVE =================\n')
             print(memo)
-            print('\n========================================================')
+            print('\n=================================================')
 
-            input("\nPress Enter to run another port simulation...")
+            if input("\nRun another scenario? (y/n): ").lower() != 'y': break
 
     main()
 
