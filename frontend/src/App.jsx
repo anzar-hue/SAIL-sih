@@ -26,7 +26,7 @@ const CustomTooltip = ({ active, payload, label }) => {
   return null;
 };
 
-function SAILWarRoom() {
+function SAILWarRoom({ onReturn }) {
   // Step 1: Base Inputs
   const [cargo, setCargo] = useState('Iron Ore');
   const [port, setPort] = useState('Haldia');
@@ -46,6 +46,7 @@ function SAILWarRoom() {
     { month: 'Current', basePrice: 0, shockPrice: 0, storage: 0 }
   ]);
   const [financials, setFinancials] = useState(null);
+  const [scenarioData, setScenarioData] = useState(null);
   const [executiveMemo, setExecutiveMemo] = useState("Run a simulation to generate the CFO directive.");
 
  const handleSimulate = async () => {
@@ -82,6 +83,7 @@ function SAILWarRoom() {
           marginPercent: marginPercent,
           marginType: scenarioA < scenarioB ? 'Profit Edge' : 'Loss Exposure'
         });
+        setScenarioData({ a: data.scenario_a_buy_now, b: data.scenario_b_wait });
         
         setExecutiveMemo(result.executive_memo);
         
@@ -111,17 +113,25 @@ function SAILWarRoom() {
       {/* SAIL Corporate Navbar */}
       <nav className="bg-[#18316E] text-white p-4 flex justify-between items-center shadow-md">
         <div className="flex items-center gap-3">
-          {/* Replace with actual SAIL logo image if you have it */}
           <div className="w-8 h-8 bg-white rotate-45 flex items-center justify-center">
             <div className="w-4 h-4 bg-[#18316E]"></div>
           </div>
           <h1 className="text-xl font-bold tracking-wider">SAIL <span className="font-light">| LOGISTICS ORCHESTRATOR V3</span></h1>
         </div>
-        <div className="text-sm text-blue-200">Executive War Room</div>
+        
+        {/* NEW: Exit Button added next to the War Room text */}
+        <div className="flex items-center gap-4">
+          <div className="text-sm text-blue-200 hidden md:block">Executive War Room</div>
+          <button 
+            onClick={onReturn}
+            className="bg-white text-[#18316E] hover:bg-gray-200 px-4 py-1.5 rounded text-sm font-bold transition-colors shadow-sm"
+          >
+            Exit to Home
+          </button>
+        </div>
       </nav>
 
-      <div className="max-w-7xl mx-auto p-6 grid grid-cols-12 gap-6">
-        
+      <div className="grid grid-cols-12 gap-6 p-6">
         {/* LEFT PANEL: The Input Gates */}
         <div className="col-span-12 lg:col-span-4 space-y-6">
           
@@ -277,33 +287,37 @@ function SAILWarRoom() {
               {showReasoning ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
             </button>
             
-            {showReasoning && (
-              <div className="p-4 border-t border-gray-200 text-sm text-gray-600 bg-gray-50 space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <h4 className="font-bold text-[#18316E] mb-2">Scenario A (Buy Now)</h4>
-                    <ul className="space-y-1">
-                      <li>Material: ₹240.0M</li>
-                      <li>Logistics: ₹36.0M</li>
-                      <li>Godown: ₹6.0M</li>
-                      <li className="font-bold text-[#231F20] pt-2 border-t border-gray-300">Total: ₹282.0M</li>
-                    </ul>
+            {showReasoning && scenarioData && financials && (
+                <div className="p-4 border-t border-gray-200 text-sm text-gray-600 bg-gray-50 space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <h4 className="font-bold text-[#18316E] mb-2">Scenario A (Buy Now)</h4>
+                      <ul className="space-y-1">
+                        <li>Material: ₹{(scenarioData.a.material_cost / 1e6).toFixed(1)}M</li>
+                        <li>Logistics: ₹{(scenarioData.a.logistics_cost / 1e6).toFixed(1)}M</li>
+                        <li>Godown: ₹{(scenarioData.a.storage_cost / 1e6).toFixed(1)}M</li>
+                        <li className="font-bold text-[#231F20] pt-2 border-t border-gray-300">
+                          Total: ₹{(scenarioData.a.total_cost / 1e6).toFixed(1)}M
+                        </li>
+                      </ul>
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-[#F97316] mb-2">Scenario B (Wait - Risk Adj)</h4>
+                      <ul className="space-y-1">
+                        <li>Material: ₹{(scenarioData.b.shock_material_cost / 1e6).toFixed(1)}M</li>
+                        <li>Logistics: ₹{(scenarioData.b.logistics_cost / 1e6).toFixed(1)}M</li>
+                        <li>Demurrage: ₹{(scenarioData.b.demurrage_penalty / 1e6).toFixed(1)}M</li>
+                        <li className="font-bold text-[#231F20] pt-2 border-t border-gray-300">
+                          Total: ₹{(scenarioData.b.total_cost / 1e6).toFixed(1)}M
+                        </li>
+                      </ul>
+                    </div>
                   </div>
-                  <div>
-                    <h4 className="font-bold text-[#F97316] mb-2">Scenario B (Wait - Risk Adj)</h4>
-                    <ul className="space-y-1">
-                      <li>Material: ₹262.1M</li>
-                      <li>Logistics: ₹36.0M</li>
-                      <li>Demurrage: ₹0.0M</li>
-                      <li className="font-bold text-[#231F20] pt-2 border-t border-gray-300">Total: ₹298.1M</li>
-                    </ul>
-                  </div>
+                  <p className="bg-white p-3 border border-gray-200 rounded italic text-xs">
+                    Alternative Risk: Waiting exposes SAIL to severe market volatility and a {cargo} price escalation of {((financials.applied_shock_multiplier - 1) * 100).toFixed(0)}%. Speculating introduces unacceptable exposure to supply tightness and costly blast furnace feedstock disruptions.
+                  </p>
                 </div>
-                <p className="bg-white p-3 border border-gray-200 rounded italic text-xs">
-                  Alternative Risk: Waiting exposes SAIL to severe market volatility and an iron ore price escalation of 12%. Speculating introduces unacceptable exposure to supply tightness and costly blast furnace feedstock disruptions.
-                </p>
-              </div>
-            )}
+              )}
           </div>
         </div>
       </div>
@@ -379,7 +393,7 @@ export default function App() {
       {currentView === 'landing' ? (
         <LandingPage onLaunch={() => setCurrentView('dashboard')} />
       ) : (
-        <SAILWarRoom />
+        <SAILWarRoom onReturn={() => setCurrentView('landing')} />
       )}
     </>
   );
