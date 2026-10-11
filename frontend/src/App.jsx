@@ -68,6 +68,11 @@ function SAILWarRoom({ onReturn }) {
       });
 
       const result = await response.json();
+      if (!response.ok || result.status !== "success") {
+        setExecutiveMemo(`Error: ${result.message || 'Request failed'}`);
+        setIsSimulating(false);
+        return;
+      }
       
       if (result.status === "success") {
         const data = result.data;
@@ -85,7 +90,7 @@ function SAILWarRoom({ onReturn }) {
         });
         setScenarioData({ a: data.scenario_a_buy_now, b: data.scenario_b_wait });
         
-        setExecutiveMemo(result.executive_memo);
+        setExecutiveMemo(result.executive_memo || "CFO directive unavailable. Check the backend and GEMINI_API_KEY.");
         
         // Build 5 data points for a smooth "natural" curve
         const base = data.scenario_b_wait.predicted_base_material_cost / 1000000;
@@ -294,8 +299,8 @@ function SAILWarRoom({ onReturn }) {
                       <h4 className="font-bold text-[#18316E] mb-2">Scenario A (Buy Now)</h4>
                       <ul className="space-y-1">
                         <li>Material: ₹{(scenarioData.a.material_cost / 1e6).toFixed(1)}M</li>
-                        <li>Logistics: ₹{(scenarioData.a.logistics_cost / 1e6).toFixed(1)}M</li>
-                        <li>Godown: ₹{(scenarioData.a.storage_cost / 1e6).toFixed(1)}M</li>
+                        <li>Logistics: ₹{(scenarioData.a.logistics.total_logistics_cost / 1e6).toFixed(1)}M</li>
+                        <li>Godown: ₹{(scenarioData.a.godown_storage_cost / 1e6).toFixed(1)}M</li>
                         <li className="font-bold text-[#231F20] pt-2 border-t border-gray-300">
                           Total: ₹{(scenarioData.a.total_cost / 1e6).toFixed(1)}M
                         </li>
@@ -305,8 +310,8 @@ function SAILWarRoom({ onReturn }) {
                       <h4 className="font-bold text-[#F97316] mb-2">Scenario B (Wait - Risk Adj)</h4>
                       <ul className="space-y-1">
                         <li>Material: ₹{(scenarioData.b.shock_material_cost / 1e6).toFixed(1)}M</li>
-                        <li>Logistics: ₹{(scenarioData.b.logistics_cost / 1e6).toFixed(1)}M</li>
-                        <li>Demurrage: ₹{(scenarioData.b.demurrage_penalty / 1e6).toFixed(1)}M</li>
+                        <li>Logistics: ₹{(scenarioData.b.logistics.base_freight_cost / 1e6).toFixed(1)}M</li>
+                        <li>Demurrage: ₹{(scenarioData.b.logistics.demurrage_penalty / 1e6).toFixed(1)}M</li>
                         <li className="font-bold text-[#231F20] pt-2 border-t border-gray-300">
                           Total: ₹{(scenarioData.b.total_cost / 1e6).toFixed(1)}M
                         </li>

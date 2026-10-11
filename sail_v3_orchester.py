@@ -160,7 +160,8 @@ if __name__ == "__main__":
                 port_name=port_name,
                 event_keyword=event_keyword,
                 target_months_away=target_months,
-                godown_cost_per_tonne_per_month=active_cargo['storage']
+                godown_cost_per_tonne_per_month=active_cargo['storage'],
+                cargo=active_cargo['name']
             )
             
             # Inject cargo name into the result so Gemini knows what it is analyzing
@@ -176,4 +177,3 @@ if __name__ == "__main__":
             if input("\nRun another scenario? (y/n): ").lower() != 'y': break
 
     main()
-

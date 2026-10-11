@@ -4,6 +4,53 @@ from sklearn.linear_model import Ridge
 import joblib
 import os
 
+USD_INR = 83.5  # port demurrage rates are quoted in USD/day
+
+# ==========================================================
+# CARGO-SPECIFIC EVENT SENSITIVITIES  (Layer 2 inputs)
+# PLACEHOLDER VALUES chosen from domain reasoning, NOT fitted to data.
+# When official SAIL / maritime datasets arrive, replace these two tables
+# (or fill them from a regression) - no other code needs to change.
+# Any cargo/event missing here falls back to the flat shock matrix below.
+# ==========================================================
+# Price multiplier applied to the predicted future base price
+CARGO_SHOCK_MATRIX = {
+    "coking_coal": {  # same values as the original flat matrix
+        "war": 1.25, "port_closed": 1.15, "weather_issues": 1.10,
+        "disaster": 1.20, "industry_needs_rise": 1.12,
+    },
+    "iron_ore": {  # liquefaction in rain -> weather hits hardest; less war-exposed
+        "war": 1.12, "port_closed": 1.15, "weather_issues": 1.18,
+        "disaster": 1.22, "industry_needs_rise": 1.15,
+    },
+    "fertilizer": {  # water-soluble + energy-linked -> weather and war both severe
+        "war": 1.30, "port_closed": 1.12, "weather_issues": 1.20,
+        "disaster": 1.25, "industry_needs_rise": 1.05,
+    },
+    "pol_liquid": {  # oil-driven -> war dominates; only high wind stops discharge
+        "war": 1.35, "port_closed": 1.12, "weather_issues": 1.08,
+        "disaster": 1.15, "industry_needs_rise": 1.06,
+    },
+}
+
+# Expected berthing/discharge delay (days) in Scenario B per event
+CARGO_WEATHER_DELAY_DAYS = {
+    "coking_coal": {"weather_issues": 3, "disaster": 3},
+    "iron_ore":    {"weather_issues": 5, "disaster": 6},
+    "fertilizer":  {"weather_issues": 6, "disaster": 7},
+    "pol_liquid":  {"weather_issues": 2, "disaster": 4},
+}
+
+def _cargo_key(name) -> str:
+    """Maps UI/CLI cargo labels (e.g. 'Fertilizer (F&FRM)') to table keys."""
+    n = str(name or "").lower()
+    if "coal" in n: return "coking_coal"
+    if "iron" in n: return "iron_ore"
+    if "fert" in n: return "fertilizer"
+    if "pol" in n: return "pol_liquid"
+    return ""  # unknown cargo -> falls back to the flat shock matrix
+    return None
+
 class SAIL_V3_Operations_Engine:
     def __init__(self, data_path="data/coal_data.csv"):
         self.data_path = data_path
@@ -63,7 +110,7 @@ class SAIL_V3_Operations_Engine:
     # ==========================================
     # LAYER 2: The Dynamic Event Matrix (User Shocks)
     # ==========================================
-    def apply_market_shock(self, base_price, event_keyword):
+    def apply_market_shock(self, base_price, event_keyword, cargo=None):
         """Applies probabilistic multipliers based on CFO event selections."""
         shock_matrix = {
             "none": 1.0,
@@ -77,7 +124,8 @@ class SAIL_V3_Operations_Engine:
             "industry_needs_rise": 1.12   # India building new plants
         }
         
-        multiplier = shock_matrix.get(event_keyword.lower(), 1.0)
+        event = event_keyword.lower()
+        multiplier = CARGO_SHOCK_MATRIX.get(_cargo_key(cargo), {}).get(event, shock_matrix.get(event, 1.0))
         shock_price = base_price * multiplier
         return shock_price, multiplier
 
@@ -100,7 +148,7 @@ class SAIL_V3_Operations_Engine:
             days_delayed += (overage / 10000)
             
         if days_delayed > 0:
-            demurrage_penalty = days_delayed * port_data["demurrage_rate_per_day"]
+            demurrage_penalty = days_delayed * port_data["demurrage_rate_per_day"] * USD_INR
             
         total_logistics_cost = base_freight + demurrage_penalty
         
@@ -114,7 +162,7 @@ class SAIL_V3_Operations_Engine:
     # ==========================================
     # LAYER 4: The Procurement Optimizer (Profit Brain)
     # ==========================================
-    def optimize_procurement(self, current_base, predicted_future_base, tonnage, vessel_type, port_name, event_keyword, target_months_away, godown_cost_per_tonne_per_month):
+    def optimize_procurement(self, current_base, predicted_future_base, tonnage, vessel_type, port_name, event_keyword, target_months_away, godown_cost_per_tonne_per_month, cargo=None):
         """Compares Scenario A (Buy Now) vs Scenario B (Wait) and returns full matrices."""
         
         # SCENARIO A: Buy Now (No shocks, pay for godown storage)
@@ -125,10 +173,11 @@ class SAIL_V3_Operations_Engine:
         total_scenario_a = cost_of_materials_now + logistics_now["total_logistics_cost"] + storage_cost
         
         # SCENARIO B: Wait until target month (Subject to shocks and weather risk)
-        shock_price, multiplier = self.apply_market_shock(predicted_future_base, event_keyword)
+        shock_price, multiplier = self.apply_market_shock(predicted_future_base, event_keyword, cargo)
         
         # Estimate weather risk days based on event
-        expected_weather_delays = 3 if event_keyword in ["weather_issues", "disaster"] else 0
+        default_delay = 3 if event_keyword in ["weather_issues", "disaster"] else 0
+        expected_weather_delays = CARGO_WEATHER_DELAY_DAYS.get(_cargo_key(cargo), {}).get(event_keyword, default_delay)
         logistics_future = self.calculate_logistics(tonnage, vessel_type, port_name, expected_weather_delays)
         
         cost_of_materials_future = shock_price * tonnage
@@ -154,7 +203,8 @@ class SAIL_V3_Operations_Engine:
                 "cheapest_option": "BUY_NOW" if total_scenario_a < total_scenario_b else "WAIT",
                 "savings": abs(total_scenario_a - total_scenario_b),
                 "user_expected_variance": user_variance_cost,
-                "applied_shock_multiplier": multiplier
+                "applied_shock_multiplier": multiplier,
+                "expected_weather_delay_days": expected_weather_delays
             }
         }
 
