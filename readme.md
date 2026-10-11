@@ -6,16 +6,30 @@
 
 ---
 
+## Problem Statement
+
+| | |
+| :--- | :--- |
+| **Hackathon** | Smart India Hackathon (SIH) 2026 |
+| **Problem Statement ID** | `SIH26006` |
+| **Title** | Development of an Intelligent Freight Forecasting Model for Optimized Vessel Chartering and Bulk Cargo Procurement from overseas to East Coast of India |
+| **Organization** | Ministry of Steel (Department: SAIL, Steel Authority of India Limited) |
+| **Category** | Software |
+| **Theme** | Transportation & Logistics |
+
+---
+
 ## Table of Contents
 
-1. [The Business Problem](#the-business-problem)
-2. [Our Solution](#our-solution)
-3. [The 4-Layer Mathematical Engine](#the-4-layer-mathematical-engine)
-4. [Tech Stack](#tech-stack)
-5. [Repository Structure](#repository-structure)
-6. [How to Run Locally](#how-to-run-locally)
-7. [Key Features](#key-features)
-8. [Current Limitations](#current-limitations)
+1. [Problem Statement](#problem-statement)
+2. [The Business Problem](#the-business-problem)
+3. [Our Solution](#our-solution)
+4. [The 4-Layer Mathematical Engine](#the-4-layer-mathematical-engine)
+5. [Tech Stack](#tech-stack)
+6. [Repository Structure](#repository-structure)
+7. [How to Run Locally](#how-to-run-locally)
+8. [Key Features](#key-features)
+9. [Current Limitations](#current-limitations)
 
 ---
 
