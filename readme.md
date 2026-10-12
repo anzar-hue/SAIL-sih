@@ -24,7 +24,7 @@
 1. [Overview](#overview)
 2. [Self-Learning Feedback Loop](#self-learning-feedback-loop)
 3. [Key Capabilities](#key-capabilities)
-4. [The 4-Layer Mathematical Engine](#the-4-layer-mathematical-engine)
+4. [The 6-Layer Mathematical Engine](#the-6-layer-mathematical-engine)
 5. [Architecture and Tech Stack](#architecture-and-tech-stack)
 6. [API Reference](#api-reference)
 7. [Repository Structure](#repository-structure)
@@ -39,38 +39,41 @@
 
 SAIL loses significant sums each year to demurrage penalties, weather-related port delays and volatile raw-material markets. Black-box models such as XGBoost make this worse in one respect: a CFO cannot audit them, which makes multi-crore procurement decisions hard to sign off.
 
-V3 replaces the black box with a transparent **4-layer operations research engine**. Instead of only predicting a price, it answers the questions a procurement desk actually asks:
+V3 replaces the black box with a transparent **6-layer operations research engine**. Instead of only predicting a price, it answers the questions a procurement desk actually asks:
 
 * **Where should we buy from?** It ranks import origins by landed cost for the selected cargo.
 * **When should we order?** It costs every candidate order date between today and the delivery deadline and recommends an order *window*.
-* **What does it cost us to be wrong?** Every figure (material, freight, bunker fuel, demurrage, storage) is itemised for audit.
-* **Did the model get it right?** The buyer records the actual price paid, and the engine measures its own error and corrects future estimates.
+* **What are the hidden costs?** The model incorporates statutory taxes, route charges, port disbursements, and incident risks.
+* **What does it cost us to be wrong?** Every figure (material, freight, bunker fuel, demurrage, storage, port dues, taxes) is itemised for audit.
+* **Did the model get it right?** The buyer records the actual price paid and specific realized risks, and the engine measures its own error and corrects future estimates.
 
 A Gemini-generated executive memo summarises the numbers for the board, and a local briefing engine takes over automatically if the AI service is unavailable.
 
 ---
 
-## Self-Learning Feedback Loop
+## Self-Learning Feedback Loop (The Highlight)
 
 This is the feature that separates V3 from a one-shot calculator: **the system improves itself from a single user input, the actual price paid.**
 
 ```text
   1. PREDICT          2. LOG               3. BUY                4. RECORD ACTUAL
   Optimizer runs  ->  Prediction saved ->  Order placed,      ->  Buyer enters the price
-  and recommends      to history with      suggested window      per tonne actually paid
-  origin + window     its order window     passes                in the History tab
+  and recommends      to history with      suggested window      paid, port charges,
+  origin + window     its order window     passes                and incident codes
         ^                                                                  |
         |                                                                  v
   6. CORRECT FUTURE  <-------------------------------------------  5. MEASURE ERROR
-  Estimates for that cargo are scaled by the                        Variance, MAE, MAPE and
-  learned error; a notice tells the user                            bias are updated live
+  Estimates for that cargo are scaled by the                        Variance, MAE, MAPE, bias,
+  learned error; a notice tells the user                            and risk incidents are
+                                                                    updated live
+
 ```
 
 **How it works**
 
 1. Every date-based optimization is stored in the `prediction_history` table (SQLite) together with its suggested order window. Re-running identical inputs updates the existing entry, so experimentation does not flood the history.
 2. One week after the suggested order date, a **notification** appears in the top-right corner asking the buyer to record the actual price. It appears once, and disappears when the buyer opens History or dismisses it.
-3. The buyer enters the purchase price per tonne in the History tab. The system stores the variance and refreshes accuracy statistics (mean absolute error, mean absolute % error, and bias).
+3. The buyer enters the actual purchase price per tonne, the exact Rupee port charges (docking, labor, cleaning), and logs any realized risk events (e.g., Cargo Damage, Labor Strike) in the History tab. The system stores the variance and refreshes accuracy statistics (mean absolute error, mean absolute % error, bias, and incident frequency).
 4. Once **3 or more purchases** of a cargo are recorded, the engine applies a **calibration factor** to that cargo's future price estimates. The factor is the average ratio of actual to predicted price over the last 10 purchases, limited to ±20%. The dashboard displays the correction in use.
 
 **Safeguards**
@@ -79,33 +82,36 @@ This is the feature that separates V3 from a one-shot calculator: **the system i
 * Calibration is stored per prediction so earlier corrections are not double-counted.
 * A new cargo starts uncalibrated (factor 1.0) and never changes without real data.
 
-**What this is, precisely:** a transparent bias-correction loop that learns from realised outcomes. A full statistical refit of the Ridge baseline on accumulated monthly history is the planned next step once enough data exists (see [Roadmap](#current-limitations-and-roadmap)).
+**What this is, precisely:** a transparent bias-correction loop that learns from realised outcomes and builds a historical record of real-world supply chain chaos. A full statistical refit of the Ridge baseline on accumulated monthly history is the planned next step once enough data exists (see [Roadmap](https://www.google.com/search?q=%23current-limitations-and-roadmap)).
 
 ---
 
-## Key Capabiliti453sw33es
+## Key Capabilities
 
 | Capability | Description |
-| :--- | :--- |
+| --- | --- |
 | **Origin intelligence** | Each cargo has its own import origins (for example Australia, USA, Canada, Mozambique and Russia for coking coal). The engine ranks them by landed cost per tonne and explains the recommendation with reasons generated from the numbers, not by the AI. |
 | **Date-aware order timing** | The user enters today's date and the required delivery date. The optimizer costs weekly candidate order dates, accounting for transit time, weather delay and storage, and recommends a window of about three days either side of the best date. Exact calendar days are deliberately withheld from the AI memo. |
 | **Cargo-aware market shocks** | Disruptions such as war, monsoon alerts, port congestion and demand surges affect each cargo differently. Weather hits iron ore and fertilizer hardest; war hits POL hardest. The sensitivities live in two lookup tables so they can be replaced with data-fitted values. |
 | **Chemical-aware logistics** | Storage cost, handling constraints and weather exposure reflect each cargo's physical risk: spontaneous combustion in wet coking coal, liquefaction of iron ore fines, dissolution of fertilizer, and the wind limit for POL manifolds. |
+| **Dynamic tax & tariff routing** | Users input anticipated origin taxes, Indian customs duties, and sea-route charges (canal tolls, piracy surcharges) as a percentage of the baseline prediction. Calculations dynamically adjust based on FOB or CIF purchase terms. |
 | **Real import records** | Coking-coal price levels and supply volumes by origin are calculated from SAIL import records stored in `sail_database.db` (last three financial years). |
-| **Port capacity and demurrage** | Port handling limits are enforced, with demurrage charged in rupees from USD day rates for any delay beyond capacity or weather. |
-| **Full audit trail** | A "Mathematical Justification" panel itemises material, logistics, demurrage and storage for each scenario. |
+| **Port capacity and demurrage** | Port handling limits are enforced, with demurrage charged in rupees from USD day rates for any delay beyond capacity or weather. Flat port disbursements (towing, pilotage) are generated per vessel call. |
+| **Full audit trail** | A "Mathematical Justification" panel itemises material, logistics, demurrage, storage, and port disbursements for each scenario. |
 | **Resilient AI briefing** | Gemini 3.8 Flash writes the executive memo. If the API is unavailable, an offline briefing built from the same numbers is shown and labelled as such. Identical scenarios are cached to conserve API quota. |
 
 ---
 
-## The 4-Layer Mathematical Engine
+## The 6-Layer Mathematical Engine
 
 | Layer | Name | What it does |
-| :--- | :--- | :--- |
+| --- | --- | --- |
 | **1** | Baseline Econometrics | Interpretable Ridge-regression base pricing from bunker fuel, global volume and exchange-rate data. Reference prices feed the optimizer, adjusted by the calibration factor learned from recorded purchases. |
 | **2** | Market Risk Injection | Cargo-specific multiplier and delay tables simulating geopolitical tension, industry surges, weather alerts and port congestion. |
 | **3** | Physical Logistics Constraints | Origin freight, bunker fuel (vessel burn x transit days), transit time, port capacity limits, demurrage and godown storage cost. |
 | **4** | Procurement Optimizer | Compares every candidate order date for the chosen origin and ranks all origins, isolating the saving versus buying now or waiting. |
+| **5** | Port Disbursements & Incidents | Base port call dues (towing, pilotage, anchoring, cleaning) are generated per vessel. The History tab records the exact realized amounts and any incident costs (loss/fines) to build a risk profile. |
+| **6** | Statutory & Route Charges | Indian taxes, import-origin taxes, and sea-route charges (tolls, piracy/war-risk) are calculated as a percentage of the un-shocked baseline prediction. |
 
 ---
 
@@ -117,13 +123,14 @@ This is the feature that separates V3 from a one-shot calculator: **the system i
                                     +--------------------+--------------------+
                                     |                    |                    |
                             sail_v3_engine.py     SQLite database      Gemini 3.8 Flash
-                            4-layer OR engine     sail_database.db     executive memo
+                            6-layer OR engine     sail_database.db     executive memo
                             origins, order dates  imports, weather,    (falls back to
                             calibration inputs    prediction_history   local_memo.py)
+
 ```
 
 | Area | Technologies |
-| :--- | :--- |
+| --- | --- |
 | **Frontend** | React, Vite, Tailwind CSS, Recharts, Lucide Icons, DOMPurify |
 | **Backend** | Python, Flask, Flask-CORS |
 | **Database** | SQLite (`sail_database.db`) with parameterized queries |
@@ -135,12 +142,12 @@ This is the feature that separates V3 from a one-shot calculator: **the system i
 ## API Reference
 
 | Method | Endpoint | Purpose |
-| :--- | :--- | :--- |
+| --- | --- | --- |
 | `GET` | `/api/v3/origins` | Import origins available for each cargo. |
-| `POST` | `/api/v3/optimize` | Runs the optimizer. Send `cargo`, `origin`, `port_name`, `tonnage`, `event_keyword`, `current_date`, `delivery_date`. Returns scenarios, order window, origin ranking, calibration info and the executive memo. A request without `delivery_date` uses the legacy months-based path. |
+| `POST` | `/api/v3/optimize` | Runs the optimizer. Send `cargo`, `origin`, `port_name`, `tonnage`, `event_keyword`, `current_date`, `delivery_date`, `extras`. Returns scenarios, order window, origin ranking, calibration info and the executive memo. A request without `delivery_date` uses the legacy months-based path. |
 | `GET` | `/api/v3/history` | All logged predictions with accuracy statistics. |
 | `GET` | `/api/v3/history/due?as_of=YYYY-MM-DD` | Predictions whose notification is due. |
-| `POST` | `/api/v3/history/<id>/actual` | Records the actual price paid (`actual_price`, optional `confirm`). |
+| `POST` | `/api/v3/history/<id>/actual` | Records the actual price paid, exact port charges, and realized risk incidents (`actual_price`, `port_labour`, `docking`, `risks`, optional `confirm`). |
 | `POST` | `/api/v3/history/<id>/dismiss` | Dismisses a notification. |
 | `POST` | `/api/simulate` | V2 dashboard route (live weather risk, trajectory chart). |
 
@@ -158,14 +165,15 @@ miniML/
 │   ├── package.json
 │   └── vite.config.js
 ├── app.py                    # Flask API, history and calibration routes, Gemini prompt
-├── sail_v3_engine.py         # 4-layer engine: origins, order timing, shocks, logistics
+├── sail_v3_engine.py         # 6-layer engine: origins, order timing, shocks, logistics, taxes
 ├── local_memo.py             # Offline executive briefing used when the AI is unavailable
-├── setup_history.py          # Creates / upgrades the prediction_history table
+├── setup_history.py          # Creates / upgrades the advanced prediction_history table
 ├── sail_v3_orchester.py      # CLI orchestrator
 ├── sail_v2_engine.py         # V2 econometric engine
 ├── sail_database.db          # SQLite: imports, fuel, FX, weather, prediction history
 ├── requirements.txt
 └── .env                      # GEMINI_API_KEY (never commit this file)
+
 ```
 
 ---
@@ -176,18 +184,21 @@ miniML/
 
 ```bash
 pip install -r requirements.txt
+
 ```
 
 Create a `.env` file in the project root:
 
 ```env
 GEMINI_API_KEY=your_key_here
+
 ```
 
 Start the server. The history table is created or upgraded automatically on startup:
 
 ```bash
 python app.py
+
 ```
 
 If no API key is set, or the quota is exhausted, the dashboard shows the offline briefing instead.
@@ -201,6 +212,7 @@ cd frontend
 npm install
 npm install dompurify
 npm run dev
+
 ```
 
 ### 3. Open the app
@@ -212,22 +224,24 @@ Go to `http://localhost:5173` and click **Launch Forecasting Engine**.
 ## Demo Walkthrough
 
 1. Choose **Coking Coal**, an origin and a port, then set the **delivery date** a couple of months ahead. Run the optimization and review the recommended origin, the order window and the cost breakdown.
-2. Open **Origin Intelligence** to see why another origin is cheaper or why one is flagged.
-3. To demonstrate the feedback loop, move **Today's Date** forward by 8 days. A notification appears asking for the actual price.
-4. Click **Go to History**, enter the price you paid, and watch the error statistics update.
-5. After three recorded purchases of the same cargo, run the optimizer again: a note shows the calibration now applied to its estimates.
+2. Scroll to **Improve this estimate**, add Indian Taxes (e.g., 25%) and select **FOB**. Watch the engine recalculate and apply the taxes specifically to the baseline prediction.
+3. Open **Origin Intelligence** to see why another origin is cheaper or why one is flagged.
+4. To demonstrate the feedback loop, move **Today's Date** forward by 8 days. A notification appears asking for the actual price.
+5. Click **Go to History**, enter the exact price you paid, log specific port charges (docking, anchoring), and select an incident code (e.g., Cyclone Delay). Watch the error statistics update.
+6. After three recorded purchases of the same cargo, run the optimizer again: a note shows the calibration now applied to its estimates.
 
 ---
 
 ## Data Sources and Assumptions
 
 | Item | Source | Status |
-| :--- | :--- | :--- |
+| --- | --- | --- |
 | Coking-coal import price and volume by origin | `coking_coal` table in `sail_database.db` (last 3 financial years) | **Real records** |
 | Freight, transit time and weather delay per origin | Engineering estimates | Placeholder, pending official data |
 | Origins and prices for iron ore, fertilizer and POL | Engineering estimates | Placeholder, pending official data |
 | Cargo-specific shock and delay sensitivities | Domain reasoning | Placeholder, designed to be replaced by fitted values |
 | Bunker fuel price | Assumed USD 600 per tonne | Placeholder |
+| Port Disbursements | Assumed USD 50,000 per vessel call | Placeholder |
 | Weather observations (10,000 rows) | Demo dataset labelled non-authoritative | Synthetic |
 
 ---
