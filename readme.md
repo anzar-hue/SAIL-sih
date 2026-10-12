@@ -83,7 +83,7 @@ This is the feature that separates V3 from a one-shot calculator: **the system i
 
 ---
 
-## Key Capabilities
+## Key Capabiliti453sw33es
 
 | Capability | Description |
 | :--- | :--- |
