@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect, Fragment } from 'react';
 import { Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Area, ComposedChart } from 'recharts';
-import { AlertTriangle, Anchor, ShieldCheck, ChevronDown, ChevronUp } from 'lucide-react';
+import { AlertTriangle, Anchor, ShieldCheck, ChevronDown, ChevronUp, Bell, X } from 'lucide-react';
+import DOMPurify from 'dompurify'
 // Custom Tooltip Component
 const CustomTooltip = ({ active, payload, label }) => {
   if (active && payload && payload.length) {
@@ -26,6 +27,24 @@ const CustomTooltip = ({ active, payload, label }) => {
   return null;
 };
 
+const todayStr = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+const addDays = (iso, n) => { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() + n); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
+const fmtDate = (iso) => !iso ? '—' : new Date(iso + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+
+const RISK_OPTIONS = [
+  ['CYCLONE_WEATHER', 'Cyclone / weather delay'], ['CARGO_DAMAGE_LOSS', 'Cargo damage or loss'], ['FINE_PENALTY', 'Fine or penalty'],
+  ['WAR_ROUTE_DISRUPTION', 'War / route disruption'], ['SHIP_LOSS', 'Ship loss'], ['LABOUR_STRIKE', 'Port labour strike'], ['CUSTOMS_HOLD', 'Customs hold']
+];
+const RISK_LABELS = Object.fromEntries(RISK_OPTIONS);
+const CHARGE_FIELDS = [
+  ['port_labour', 'Port labour paid (₹)'], ['docking', 'Docking charges (₹)'], ['anchoring', 'Anchoring charges (₹)'],
+  ['cleaning', 'Ship cleaning (₹)'], ['other_charges', 'Other hidden charges (₹)']
+];
+const EXTRA_LABELS = {
+  origin_tax_pct: 'Import-origin taxes', india_tax_pct: 'Indian taxes', sea_route_pct: 'Sea-route charges',
+  other_pct: 'Other charges', insurance_pct: 'Marine insurance'
+};
+
 function SAILWarRoom({ onReturn }) {
   // Step 1: Base Inputs
   const [cargo, setCargo] = useState('Iron Ore');
@@ -34,7 +53,105 @@ function SAILWarRoom({ onReturn }) {
   
   // Step 2: Shock Inputs (Gated)
   const [event, setEvent] = useState('none');
-  const [months, setMonths] = useState(2);
+  const [currentDate, setCurrentDate] = useState(todayStr());
+  const [deliveryDate, setDeliveryDate] = useState(addDays(todayStr(), 60));
+  const [originChoice, setOriginChoice] = useState('');
+  const [originMap, setOriginMap] = useState({});
+  const [timing, setTiming] = useState(null);
+  const [originInfo, setOriginInfo] = useState(null);
+  const [calibration, setCalibration] = useState(null);
+
+  // Extra charges (percent of the predicted cost) + purchase terms
+  const [extras, setExtras] = useState({ origin_tax_pct: '', india_tax_pct: '', sea_route_pct: '', other_pct: '', insurance_pct: '' });
+  const [incoterm, setIncoterm] = useState('FOB');
+  const [matrix, setMatrix] = useState(null);
+  const [missing, setMissing] = useState([]);
+  const [openId, setOpenId] = useState(null);
+  const [form, setForm] = useState({});
+
+  // History + notifications
+  const [view, setView] = useState('optimizer');
+  const [due, setDue] = useState([]);
+  const [dueTick, setDueTick] = useState(0);
+  const [history, setHistory] = useState({ rows: [], stats: null });
+  const [historyMsg, setHistoryMsg] = useState('');
+
+  // Origins per cargo come from the backend (single source of truth)
+  useEffect(() => {
+    fetch('http://localhost:5000/api/v3/origins')
+      .then((r) => r.json())
+      .then(setOriginMap)
+      .catch(() => setOriginMap({}));
+  }, []);
+
+  // Derived, not synced in an effect: fall back to the first origin when the cargo changes
+  const originList = originMap[cargo] || [];
+  const origin = originList.includes(originChoice) ? originChoice : (originList[0] || '');
+
+  // Predictions whose suggested order date passed a week ago and still need the actual price
+  useEffect(() => {
+    const load = () => fetch(`http://localhost:5000/api/v3/history/due?as_of=${currentDate}`)
+      .then((r) => r.json())
+      .then((d) => setDue(Array.isArray(d) ? d : []))
+      .catch(() => setDue([]));
+    load();
+    const timer = setInterval(load, 60000);
+    return () => clearInterval(timer);
+  }, [currentDate, dueTick]);
+
+  useEffect(() => {
+    if (view !== 'history') return;
+    fetch('http://localhost:5000/api/v3/history')
+      .then((r) => r.json())
+      .then(setHistory)
+      .catch(() => setHistory({ rows: [], stats: null }));
+  }, [view, dueTick]);
+
+  const dismissDue = (id) => {
+    fetch(`http://localhost:5000/api/v3/history/${id}/dismiss`, { method: 'POST' }).catch(() => {});
+    setDue((d) => d.filter((x) => x.id !== id));
+  };
+
+  const openHistory = () => {
+    due.forEach((d) => dismissDue(d.id));
+    setView('history');
+  };
+
+  const setF = (id, patch) => setForm((f) => ({ ...f, [id]: { ...(f[id] || {}), ...patch } }));
+  const toggleRisk = (id, code) => {
+    const cur = form[id]?.risks || [];
+    setF(id, { risks: cur.includes(code) ? cur.filter((c) => c !== code) : [...cur, code] });
+  };
+
+  const saveActual = async (id, confirm = false) => {
+    const f = form[id] || {};
+    const val = Number(f.price);
+    if (!val || val <= 0) { setHistoryMsg('Enter the purchase price per tonne (greater than zero).'); return; }
+    const num = (x) => Number(x) || 0;
+    try {
+      const res = await fetch(`http://localhost:5000/api/v3/history/${id}/actual`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          actual_price: val, port_labour: num(f.port_labour), docking: num(f.docking), anchoring: num(f.anchoring),
+          cleaning: num(f.cleaning), other_charges: num(f.other_charges), incident_cost: num(f.incident_cost),
+          risks: f.risks || [], confirm
+        })
+      });
+      const out = await res.json();
+      if (res.status === 409 && window.confirm(out.message)) return saveActual(id, true);
+      if (res.ok) {
+        setHistoryMsg('');
+        setOpenId(null);
+        setForm((p) => { const n = { ...p }; delete n[id]; return n; });
+        setDueTick((t) => t + 1);
+      } else if (res.status !== 409) {
+        setHistoryMsg(out.message || 'Could not save the record.');
+      }
+    } catch {
+      setHistoryMsg('Error connecting to backend.');
+    }
+  };
   
   // UI State
   const [showReasoning, setShowReasoning] = useState(false);
@@ -51,7 +168,7 @@ function SAILWarRoom({ onReturn }) {
 
  const handleSimulate = async () => {
     setIsSimulating(true);
-    
+    setExecutiveMemo("<div class='animate-pulse text-[#18316E] font-bold py-4'>⏳ Crunching Operations Research matrix and generating CFO directive...</div>");
     try {
       const response = await fetch('http://localhost:5000/api/v3/optimize', {
         method: 'POST',
@@ -61,7 +178,10 @@ function SAILWarRoom({ onReturn }) {
           port_name: port,
           tonnage: Number(tonnage),
           event_keyword: event,
-          target_months_away: Number(months),
+          current_date: currentDate,
+          delivery_date: deliveryDate,
+          origin: origin,
+          extras: { ...Object.fromEntries(Object.entries(extras).map(([k, v]) => [k, Number(v) || 0])), incoterm },
           vessel_type: "Panamax",
           godown_cost_per_tonne_per_month: cargo === 'Fertilizer (F&FRM)' ? 350 : cargo === 'POL (Liquid)' ? 600 : 150
         })
@@ -77,33 +197,33 @@ function SAILWarRoom({ onReturn }) {
       if (result.status === "success") {
         const data = result.data;
         
-        // Calculate Profit/Loss Margin %
-        const scenarioA = data.scenario_a_buy_now.total_cost;
-        const scenarioB = data.scenario_b_wait.total_cost;
-        const marginPercent = ((Math.abs(scenarioA - scenarioB) / Math.max(scenarioA, scenarioB)) * 100).toFixed(2);
+        // Margin = saving vs the alternative strategy, as % of the alternative's cost
+        const marginPercent = data.financial_analysis.margin_percent.toFixed(2);
         
         // Inject margin into the state
         setFinancials({
           ...data.financial_analysis,
           marginPercent: marginPercent,
-          marginType: scenarioA < scenarioB ? 'Profit Edge' : 'Loss Exposure'
+          marginType: 'Profit Edge'
         });
         setScenarioData({ a: data.scenario_a_buy_now, b: data.scenario_b_wait });
         
         setExecutiveMemo(result.executive_memo || "CFO directive unavailable. Check the backend and GEMINI_API_KEY.");
         
-        // Build 5 data points for a smooth "natural" curve
-        const base = data.scenario_b_wait.predicted_base_material_cost / 1000000;
-        const shock = data.scenario_b_wait.shock_material_cost / 1000000;
-        const curr = data.scenario_a_buy_now.material_cost / 1000000;
-        
-        setChartData([
-          { month: 'Today', basePrice: curr, shockPrice: curr },
-          { month: 'Week 2', basePrice: curr - (curr-base)*0.2, shockPrice: curr + (shock-curr)*0.3 },
-          { month: 'Month 1', basePrice: (curr + base)/2, shockPrice: (curr + shock)/2 },
-          { month: 'Week 6', basePrice: base + (curr-base)*0.1, shockPrice: shock - (shock-curr)*0.1 },
-          { month: `Month ${months} (Target)`, basePrice: base, shockPrice: shock }
-        ]);
+        setTiming(data.timing);
+        setOriginInfo({ selected: data.origin, recommended: data.recommended_origin, reasons: data.origin_reasons, table: data.origin_comparison });
+        setCalibration(data.calibration || null);
+        setMatrix(data.scenario_matrix || null);
+        setMissing(data.inputs_not_provided || []);
+        setDueTick((t) => t + 1);
+        // One real point per candidate order date
+        setChartData(data.timing.candidates.map((c) => ({
+          month: fmtDate(c.date),
+          basePrice: c.total_cost_no_event / 1e6,
+          shockPrice: c.total_cost / 1e6,
+          extrasPrice: c.total_cost_extras / 1e6,
+          allPrice: c.total_cost_all / 1e6
+        })));
       }
     } catch (error) {
       console.error("API Error:", error);
@@ -126,7 +246,8 @@ function SAILWarRoom({ onReturn }) {
         
         {/* NEW: Exit Button added next to the War Room text */}
         <div className="flex items-center gap-4">
-          <div className="text-sm text-blue-200 hidden md:block">Executive War Room</div>
+          <button onClick={() => setView('optimizer')} className={`px-3 py-1.5 rounded text-sm font-bold transition-colors ${view === 'optimizer' ? 'bg-white text-[#18316E]' : 'text-blue-200 hover:text-white'}`}>Optimizer</button>
+          <button onClick={openHistory} className={`px-3 py-1.5 rounded text-sm font-bold transition-colors ${view === 'history' ? 'bg-white text-[#18316E]' : 'text-blue-200 hover:text-white'}`}>History</button>
           <button 
             onClick={onReturn}
             className="bg-white text-[#18316E] hover:bg-gray-200 px-4 py-1.5 rounded text-sm font-bold transition-colors shadow-sm"
@@ -136,6 +257,131 @@ function SAILWarRoom({ onReturn }) {
         </div>
       </nav>
 
+      {due.length > 0 && view !== 'history' && (
+        <div className="fixed top-20 right-4 z-50 w-80 bg-white border-l-4 border-[#F97316] shadow-lg rounded p-4">
+          <div className="flex items-start gap-3">
+            <Bell size={20} className="text-[#F97316] mt-0.5 shrink-0" />
+            <div className="flex-1 text-sm">
+              <div className="font-bold text-[#231F20]">Record your actual price</div>
+              <div className="text-gray-600">
+                Your {due[0].cargo_type} order from {due[0].origin} is past its suggested window. Enter what you paid in History
+                {due.length > 1 ? ` (${due.length} waiting)` : ''}.
+              </div>
+              <button onClick={openHistory} className="mt-2 text-[#18316E] font-bold underline">Go to History</button>
+            </div>
+            <button onClick={() => dismissDue(due[0].id)} aria-label="Dismiss notification" className="text-gray-400 hover:text-gray-700">
+              <X size={16} />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {view === 'history' ? (
+        <div className="p-6 space-y-6">
+          <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+            {[
+              ['Recorded purchases', history.stats ? history.stats.n : 0, 'border-[#18316E]'],
+              ['Mean abs. error (₹/t)', history.stats?.n ? Math.round(history.stats.mae).toLocaleString('en-IN') : '---', 'border-blue-500'],
+              ['Mean abs. % error', history.stats?.n ? `${history.stats.mape.toFixed(1)}%` : '---', 'border-[#F97316]'],
+              ['Bias (actual vs predicted)', history.stats?.n ? `${history.stats.bias >= 0 ? '+' : ''}${history.stats.bias.toFixed(1)}%` : '---', 'border-green-500'],
+              ['Shipments with incidents', history.stats?.n ? `${history.stats.incidents} of ${history.stats.n}` : '---', 'border-red-500']
+            ].map(([label, value, border]) => (
+              <div key={label} className={`bg-white p-4 rounded-lg shadow-sm border-l-4 ${border}`}>
+                <div className="text-sm text-gray-500 font-semibold">{label}</div>
+                <div className="text-2xl font-bold text-[#231F20]">{value}</div>
+              </div>
+            ))}
+          </div>
+
+          <div className="bg-white p-6 rounded-lg shadow-sm overflow-x-auto">
+            <h2 className="text-lg font-bold text-[#231F20] mb-1">Prediction History</h2>
+            <p className="text-sm text-gray-500 mb-4">
+              After each purchase, record the price per tonne you paid, the port charges you actually incurred, and any incidents. The price feeds the
+              model's calibration (3 or more purchases of a cargo); charges and incidents build a record of real-world risk.
+            </p>
+            {historyMsg && <p className="text-sm text-red-600 mb-2">{historyMsg}</p>}
+            <table className="w-full text-sm text-left">
+              <thead>
+                <tr className="text-gray-500 border-b">
+                  <th className="py-1">Logged</th><th>Cargo / route</th><th>Suggested window</th><th>Predicted ₹/t</th>
+                  <th>Extra charges entered</th><th>Actual ₹/t</th><th>Actual port charges</th><th>Incidents</th><th>Variance</th>
+                </tr>
+              </thead>
+              <tbody>
+                {history.rows.length === 0 && (
+                  <tr><td colSpan={9} className="py-4 text-gray-500">No predictions yet. Run an optimization and it will be logged here.</td></tr>
+                )}
+                {history.rows.map((r) => {
+                  const f = form[r.id] || {};
+                  const risks = r.realized_risks ? r.realized_risks.split(',') : [];
+                  return (
+                    <Fragment key={r.id}>
+                      <tr className="border-b align-top">
+                        <td className="py-2">{fmtDate(r.order_date)}</td>
+                        <td className="font-semibold">{r.cargo_type}<div className="text-xs font-normal text-gray-500">{r.origin} → {r.port || '—'}</div></td>
+                        <td>{fmtDate(r.window_start)} – {fmtDate(r.window_end)}</td>
+                        <td>{r.predicted_cost_per_tonne ? Math.round(r.predicted_cost_per_tonne).toLocaleString('en-IN') : '—'}</td>
+                        <td>
+                          {r.extras_total_pct
+                            ? <>{r.extras_total_pct.toFixed(1)}%<div className="text-xs text-gray-500">{r.incoterm} · ₹{Math.round(r.predicted_extras_per_tonne || 0).toLocaleString('en-IN')}/t</div></>
+                            : <span className="text-gray-400">not entered</span>}
+                        </td>
+                        <td>
+                          {r.status === 'COMPLETED'
+                            ? Math.round(r.actual_cost_per_tonne).toLocaleString('en-IN')
+                            : <button onClick={() => setOpenId(openId === r.id ? null : r.id)} className="bg-[#18316E] text-white px-3 py-1 rounded text-xs font-bold">{openId === r.id ? 'Close' : 'Record actuals'}</button>}
+                        </td>
+                        <td>{r.status === 'COMPLETED' && r.tonnage ? `₹${Math.round((r.actual_extra_charges_total || 0) / r.tonnage).toLocaleString('en-IN')}/t` : '—'}</td>
+                        <td>
+                          {risks.length
+                            ? risks.map((code) => <span key={code} className="inline-block bg-red-50 text-red-700 text-xs rounded px-2 py-0.5 mr-1 mb-1">{RISK_LABELS[code] || code}</span>)
+                            : (r.status === 'COMPLETED' ? 'None' : '—')}
+                        </td>
+                        <td className={r.status === 'COMPLETED' ? (Math.abs(r.variance_percent) > 10 ? 'text-red-600 font-semibold' : 'text-green-600 font-semibold') : ''}>
+                          {r.status === 'COMPLETED' ? `${r.variance_percent >= 0 ? '+' : ''}${r.variance_percent.toFixed(1)}%` : 'Awaiting actuals'}
+                        </td>
+                      </tr>
+                      {openId === r.id && r.status !== 'COMPLETED' && (
+                        <tr className="bg-gray-50 border-b">
+                          <td colSpan={9} className="p-4">
+                            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                              <div>
+                                <label className="block text-xs font-semibold text-gray-600 mb-1">Purchase price paid (₹ / tonne)</label>
+                                <input type="number" className="w-full border p-2 rounded" value={f.price || ''} onChange={(e) => setF(r.id, { price: e.target.value })} />
+                              </div>
+                              {CHARGE_FIELDS.map(([k, label]) => (
+                                <div key={k}>
+                                  <label className="block text-xs font-semibold text-gray-600 mb-1">{label}</label>
+                                  <input type="number" className="w-full border p-2 rounded" value={f[k] || ''} onChange={(e) => setF(r.id, { [k]: e.target.value })} />
+                                </div>
+                              ))}
+                              <div>
+                                <label className="block text-xs font-semibold text-gray-600 mb-1">Loss / fine amount (₹)</label>
+                                <input type="number" className="w-full border p-2 rounded" value={f.incident_cost || ''} onChange={(e) => setF(r.id, { incident_cost: e.target.value })} />
+                              </div>
+                            </div>
+                            <div className="mt-3">
+                              <div className="text-xs font-semibold text-gray-600 mb-1">Incidents on the way or before delivery</div>
+                              <div className="flex flex-wrap gap-4">
+                                {RISK_OPTIONS.map(([code, label]) => (
+                                  <label key={code} className="flex items-center gap-1 text-xs">
+                                    <input type="checkbox" checked={(f.risks || []).includes(code)} onChange={() => toggleRisk(r.id, code)} />{label}
+                                  </label>
+                                ))}
+                              </div>
+                            </div>
+                            <button onClick={() => saveActual(r.id)} className="mt-3 bg-[#F97316] text-white px-4 py-2 rounded font-bold text-sm">Save record</button>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : (
       <div className="grid grid-cols-12 gap-6 p-6">
         {/* LEFT PANEL: The Input Gates */}
         <div className="col-span-12 lg:col-span-4 space-y-6">
@@ -154,6 +400,13 @@ function SAILWarRoom({ onReturn }) {
                   <option>Fertilizer (F&FRM)</option>
                   <option>POL (Liquid)</option>
                 </select>
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-gray-600 mb-1">Import Origin</label>
+                <select className="w-full border p-2 rounded" value={origin} onChange={(e) => setOriginChoice(e.target.value)} disabled={!originList.length}>
+                  {originList.map((o) => <option key={o}>{o}</option>)}
+                </select>
+                {!originList.length && <p className="text-xs text-red-500 mt-1">Backend offline: origins unavailable.</p>}
               </div>
               <div>
                 <label className="block text-sm font-semibold text-gray-600 mb-1">Discharge Port</label>
@@ -195,9 +448,12 @@ function SAILWarRoom({ onReturn }) {
                 </select>
               </div>
               <div>
-                <label className="block text-sm font-semibold text-gray-600 mb-1">Months to Delivery (Storage Horizon)</label>
-                <input type="range" min="0" max="6" className="w-full" value={months} onChange={(e) => setMonths(e.target.value)} />
-                <div className="text-right text-sm font-bold text-[#18316E]">{months} Months</div>
+                <label className="block text-sm font-semibold text-gray-600 mb-1">Today's Date</label>
+                <input type="date" className="w-full border p-2 rounded" value={currentDate} onChange={(e) => setCurrentDate(e.target.value)} />
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-gray-600 mb-1">Required Delivery Date</label>
+                <input type="date" className="w-full border p-2 rounded" value={deliveryDate} min={addDays(currentDate, 1)} onChange={(e) => setDeliveryDate(e.target.value)} />
               </div>
               
               <button 
@@ -206,6 +462,57 @@ function SAILWarRoom({ onReturn }) {
               >
                 {isSimulating ? 'Recalculating OR Matrix...' : 'Run CFO Optimization'}
               </button>
+            </div>
+          </div>
+          {/* NEW: Dynamic Local Satellite Tracker */}
+          <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200 hidden lg:block animate-fade-in">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-bold text-[#18316E]">Estimated Voyager</h3>
+              <span className="flex items-center gap-1 text-xs text-green-600 font-bold">
+                <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+                LIVE FEED
+              </span>
+            </div>
+            <div className="rounded overflow-hidden relative h-64 shadow-inner bg-slate-900 group">
+              {/* Local Image Source */}
+              <img 
+                src={cargo === 'POL (Liquid)' ? '/route-liquid.jpg' : '/route-bulk.jpg'} 
+                alt="Route Map" 
+                className="object-cover w-full h-full opacity-60 group-hover:opacity-80 transition-opacity duration-700 scale-105 group-hover:scale-100"
+              />
+              
+              {/* Top HUD: Vessel Class */}
+              <div className="absolute top-3 left-3 flex gap-2">
+                <span className="bg-black/60 backdrop-blur-sm text-white text-[10px] px-2 py-1 rounded font-mono border border-white/20">
+                  {cargo === 'POL (Liquid)' ? 'MT TANKER' : 'PANAMAX BULK'}
+                </span>
+              </div>
+
+              {/* Bottom HUD: Dynamic Distance & Routing */}
+              <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-[#18316E]/90 via-[#18316E]/60 to-transparent p-4 pt-12">
+                <div className="flex justify-between items-end">
+                  <div>
+                    <div className="text-sky-200 text-[10px] uppercase font-bold tracking-widest mb-1">
+                      ACTIVE ROUTE
+                    </div>
+                    <div className="text-white text-sm font-bold flex items-center gap-2">
+                      {originInfo ? originInfo.selected : origin} 
+                      <span className="text-orange-400">→</span> 
+                      {port}
+                    </div>
+                  </div>
+                  
+                  {/* Dynamic Math Overlay based on Transit Days */}
+                  <div className="text-right">
+                    <div className="text-white text-lg font-black font-mono">
+                      {originInfo ? (originInfo.table.find(t => t.origin === originInfo.selected)?.transit_days * 340).toLocaleString() : '---'} NM
+                    </div>
+                    <div className="text-sky-200 text-[10px] font-semibold">
+                      EST. TRANSIT: {originInfo ? originInfo.table.find(t => t.origin === originInfo.selected)?.transit_days : '--'} DAYS
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -237,7 +544,7 @@ function SAILWarRoom({ onReturn }) {
               <div className="text-2xl font-bold text-[#18316E]">
                 {financials ? financials.cheapest_option.replace('_', ' ') : '---'}
               </div>
-              <div className="text-xs text-gray-400 mt-1">Timeline Window: {months}m</div>
+              <div className="text-xs text-gray-400 mt-1">{timing ? `Order window: ${fmtDate(timing.order_window.start)} – ${fmtDate(timing.order_window.end)}` : 'Timeline Window'}</div>
             </div>
             <div className="bg-white p-4 rounded-lg shadow-sm border-l-4 border-[#F97316]">
               <div className="text-sm text-gray-500 font-semibold">Shock Multiplier</div>
@@ -248,9 +555,135 @@ function SAILWarRoom({ onReturn }) {
             </div>
           </div>
 
+          {timing && (
+            <div className="bg-white p-6 rounded-lg shadow-sm border-l-4 border-[#18316E]">
+              <h2 className="text-lg font-bold text-[#231F20] mb-1">Improve this estimate</h2>
+              {missing.length > 0 ? (
+                <p className="text-sm text-amber-700 mb-3">
+                  Not yet included: {missing.join('; ')}. Enter them below. <strong>(Note: These percentages are calculated strictly as a % of the baseline prediction, not of the actual final cost the buyer may face).</strong>
+                </p>
+              ) : (
+                <p className="text-sm text-green-700 mb-3">All additional charge categories have been entered.</p>
+              )}
+              <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+                {[
+                  ['origin_tax_pct', 'Import-origin taxes (%)'],
+                  ['india_tax_pct', 'Indian taxes: customs duty, IGST, levies (%)'],
+                  ['sea_route_pct', 'Sea-route charges: tolls, war-risk surcharge (%)'],
+                  ['other_pct', 'Other: agency/broker fees, penalties, tariffs, crew fee (%)']
+                ].map(([k, label]) => (
+                  <div key={k}>
+                    <label className="block text-xs font-semibold text-gray-600 mb-1">{label}</label>
+                    <input type="number" min="0" max="100" className="w-full border p-2 rounded" value={extras[k]}
+                      onChange={(e) => setExtras({ ...extras, [k]: e.target.value })} />
+                  </div>
+                ))}
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Purchase terms</label>
+                  <select className="w-full border p-2 rounded" value={incoterm} onChange={(e) => setIncoterm(e.target.value)}>
+                    <option value="FOB">FOB: we arrange freight and insurance</option>
+                    <option value="CIF">CIF: supplier includes freight and insurance</option>
+                  </select>
+                </div>
+                {incoterm === 'FOB' && (
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-600 mb-1">Marine insurance (%)</label>
+                    <input type="number" min="0" max="100" className="w-full border p-2 rounded" value={extras.insurance_pct}
+                      onChange={(e) => setExtras({ ...extras, insurance_pct: e.target.value })} />
+                  </div>
+                )}
+              </div>
+              <button onClick={handleSimulate} disabled={isSimulating}
+                className="mt-4 bg-[#F97316] text-white px-4 py-2 rounded font-bold hover:bg-orange-600 disabled:opacity-60">
+                {isSimulating ? 'Recalculating...' : 'Recalculate with these inputs'}
+              </button>
+
+              {matrix && (
+                <>
+                  <div className="mt-5 grid grid-cols-2 lg:grid-cols-4 gap-3">
+                    {[
+                      ['No disruption', 'no_disruption', 'border-gray-400'],
+                      ['Normal risk', 'normal_risk', 'border-[#F97316]'],
+                      ['Extra charges only', 'extras_only', 'border-[#18316E]'],
+                      ['Risk + extra charges', 'combined', 'border-red-600']
+                    ].map(([label, key, border]) => {
+                      const total = matrix.totals[key];
+                      const delta = (total / matrix.totals.no_disruption - 1) * 100;
+                      const dim = !matrix.provided && (key === 'extras_only' || key === 'combined');
+                      return (
+                        <div key={key} className={`p-3 rounded border-l-4 bg-gray-50 ${border} ${dim ? 'opacity-40' : ''}`}>
+                          <div className="text-xs text-gray-500 font-semibold">{label}</div>
+                          <div className="text-xl font-bold text-[#231F20]">₹{(total / 1e6).toFixed(1)}M</div>
+                          <div className="text-xs text-gray-500">₹{Math.round(matrix.per_tonne[key]).toLocaleString('en-IN')} / tonne</div>
+                          <div className="text-xs font-semibold text-gray-600">{key === 'no_disruption' ? 'baseline' : `${delta >= 0 ? '+' : ''}${delta.toFixed(1)}%`}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {matrix.provided && (
+                    <p className="text-xs text-gray-600 mt-2">
+                      Extra charges total {matrix.extras_pct.toFixed(1)}% of the no-disruption cost (₹{(matrix.extras_amount / 1e6).toFixed(1)}M):{' '}
+                      {Object.entries(matrix.extras_items_amount).filter(([, v]) => v > 0)
+                        .map(([k, v]) => `${EXTRA_LABELS[k]} ₹${(v / 1e6).toFixed(1)}M`).join(', ')}.
+                    </p>
+                  )}
+                  <p className="text-xs text-gray-400 mt-1">
+                    Stress test at the recommended order date: the selected disruption is applied in full. Extra charges are a percentage of the model's predicted cost without disruption.
+                  </p>
+                </>
+              )}
+            </div>
+          )}
+
+          {originInfo && (
+            <div className="bg-white p-6 rounded-lg shadow-sm border-l-4 border-green-500">
+              <h2 className="text-lg font-bold text-[#231F20] mb-1">Origin Intelligence</h2>
+              <p className="text-sm text-gray-600 mb-3">
+                Recommended origin: <span className="font-bold text-green-700">{originInfo.recommended}</span>
+                {originInfo.recommended !== originInfo.selected && <span> (you selected {originInfo.selected})</span>}
+              </p>
+              {timing && !timing.feasible && (
+                <div className="bg-red-50 text-red-700 text-xs p-2 rounded mb-3">
+                  The selected origin cannot arrive by the delivery date. Earliest arrival: {fmtDate(timing.earliest_arrival)}.
+                </div>
+              )}
+              <ul className="list-disc pl-5 text-sm text-gray-700 space-y-1 mb-4">
+                {originInfo.reasons.map((r, i) => <li key={i}>{r}</li>)}
+              </ul>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm text-left">
+                  <thead>
+                    <tr className="text-gray-500 border-b">
+                      <th className="py-1">Origin</th><th>Landed ₹/t</th><th>Transit</th><th>Supply (3 FY)</th><th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {originInfo.table.map((r) => (
+                      <tr key={r.origin} className={`border-b ${r.origin === originInfo.recommended ? 'bg-green-50' : ''}`}>
+                        <td className="py-1 font-semibold">{r.origin}{r.origin === originInfo.selected ? ' (selected)' : ''}</td>
+                        <td>{r.feasible ? Math.round(r.landed_cost_per_tonne).toLocaleString('en-IN') : '—'}</td>
+                        <td>{r.transit_days} d</td>
+                        <td>{r.supply_mt_3fy ? `${r.supply_mt_3fy.toFixed(1)} Mt` : 'n/a'}</td>
+                        <td>{r.note ? 'Flagged' : r.feasible ? 'Feasible' : 'Too late'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {calibration && calibration.n >= 3 && (
+                <p className="text-xs text-blue-700 mt-2">
+                  Prices calibrated by ×{calibration.factor} using your last {calibration.n} recorded purchases of this cargo.
+                </p>
+              )}
+              <p className="text-xs text-gray-400 mt-2">
+                Coking-coal prices and supply volumes are import averages from SAIL records and are not adjusted for coal quality. All other origin figures are placeholder estimates pending official data.
+              </p>
+            </div>
+          )}
+
           {/* Dynamic Recharts Chart */}
           <div className="bg-white p-6 rounded-lg shadow-sm">
-            <h2 className="text-lg font-bold text-[#231F20] mb-4">Risk-Adjusted Price Trajectory (₹ Millions)</h2>
+            <h2 className="text-lg font-bold text-[#231F20] mb-4">Total Landed Cost by Order Date (₹ Millions)</h2>
             <div className="h-72">
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart data={chartData}>
@@ -260,8 +693,10 @@ function SAILWarRoom({ onReturn }) {
                   <Tooltip content={<CustomTooltip />} />
                   <Legend />
                   <Area type="natural" dataKey="shockPrice" fill="#F97316" fillOpacity={0.1} stroke="none" name="Risk Exposure Zone" />
-                  <Line type="natural" dataKey="basePrice" stroke="#231F20" strokeWidth={2} name="Scenario B (Unshocked)" />
-                  <Line type="natural" dataKey="shockPrice" stroke="#F97316" strokeWidth={3} strokeDasharray="5 5" name="Scenario B (Shocked)" />
+                  <Line type="natural" dataKey="basePrice" stroke="#231F20" strokeWidth={2} name="Without disruption" />
+                  <Line type="natural" dataKey="shockPrice" stroke="#F97316" strokeWidth={3} strokeDasharray="5 5" name="With disruption" />
+                  {matrix && matrix.provided && <Line type="natural" dataKey="extrasPrice" stroke="#18316E" strokeWidth={2} strokeDasharray="2 4" name="Extra charges only" />}
+                  {matrix && matrix.provided && <Line type="natural" dataKey="allPrice" stroke="#DC2626" strokeWidth={3} name="Disruption + extra charges" />}
                 </ComposedChart>
               </ResponsiveContainer>
             </div>
@@ -277,9 +712,12 @@ function SAILWarRoom({ onReturn }) {
             </div>
             
             {/* whitespace-pre-wrap ensures the AI's line breaks render correctly */}
-            <div className="text-gray-800 text-sm leading-relaxed mb-4 whitespace-pre-wrap">
-              {executiveMemo}
-            </div>
+            <div
+            className="text-gray-800 text-sm leading-relaxed mb-4
+               [&_h3]:font-bold [&_h3]:text-[#18316E] [&_h3]:mt-3 [&_h3]:mb-1
+               [&_ul]:list-disc [&_ul]:pl-5 [&_p]:mb-2"
+            dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(executiveMemo) }}
+            />
           </div>
 
           {/* Collapsible Math Justification */}
@@ -307,11 +745,12 @@ function SAILWarRoom({ onReturn }) {
                       </ul>
                     </div>
                     <div>
-                      <h4 className="font-bold text-[#F97316] mb-2">Scenario B (Wait - Risk Adj)</h4>
+                      <h4 className="font-bold text-[#F97316] mb-2">Scenario B (Wait - latest order date)</h4>
                       <ul className="space-y-1">
                         <li>Material: ₹{(scenarioData.b.shock_material_cost / 1e6).toFixed(1)}M</li>
                         <li>Logistics: ₹{(scenarioData.b.logistics.base_freight_cost / 1e6).toFixed(1)}M</li>
                         <li>Demurrage: ₹{(scenarioData.b.logistics.demurrage_penalty / 1e6).toFixed(1)}M</li>
+                        <li>Port charges: ₹{((scenarioData.b.logistics.port_disbursements || 0) / 1e6).toFixed(1)}M</li>
                         <li className="font-bold text-[#231F20] pt-2 border-t border-gray-300">
                           Total: ₹{(scenarioData.b.total_cost / 1e6).toFixed(1)}M
                         </li>
@@ -326,6 +765,7 @@ function SAILWarRoom({ onReturn }) {
           </div>
         </div>
       </div>
+      )}
     </div>
   );
 }
